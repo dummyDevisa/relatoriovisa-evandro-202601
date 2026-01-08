@@ -1,4 +1,4 @@
-# 📄 Relatório de Infra: Sistema de Gestão da Vigilância Sanitária (DEVISA/CVISA)
+# 📄 Relatório Técnico: Sistema de Gestão da Vigilância Sanitária (DEVISA/CVISA)
 
 **Departamento de Vigilância Sanitária - DEVISA/CVISA/SESMA**
 **Prefeitura Municipal de Belém**
@@ -71,25 +71,6 @@ graph TD
         n8n --> PG[(PostgreSQL)]
         Evolution --> PG
     end
-```
-
-#### 2.1.1 Diagrama Detalhado (ASCII)
-```
-INTERNET → CLOUDFLARE (WAF+CDN) → TRAEFIK (Reverse Proxy)
-                                        │
-           ┌────────────────────────────┼────────────────────────────┐
-           ▼                            ▼                            ▼
-    ┌─────────────┐            ┌─────────────────┐           ┌─────────────┐
-    │   PORTAL    │            │   API BACKEND   │           │     n8n     │
-    │  Principal  │            │ Backend + Auth  │           │  Automação  │
-    │ React+Vite  │            │ PocketBase+JSVM │           │  Webhooks   │
-    └─────────────┘            │ Nginx+SQLite    │           │ Redis/PgSQL │
-           │                   └────────┬────────┘           └─────────────┘
-           ▼                            │
-    ┌─────────────┐            ┌────────┴────────┐
-    │ SIST.LEGADO │            ▼                 ▼
-    │ Capacitação │      SQLite (WAL)        Hooks
-    └─────────────┘      (Persistência)    (Imagem)
 ```
 
 ### 2.2 Componentes

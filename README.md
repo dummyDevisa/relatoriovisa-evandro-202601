@@ -17,14 +17,14 @@ Este documento apresenta a arquitetura do **Sistema de Gestão de Processos da V
 ---
 
 **Índice de Tópicos:**
-1. [Visão Geral](#1-🎯-visão-geral)
-2. [Arquitetura](#2-🏗️-arquitetura)
-3. [Fluxos de Processos](#3-🔄-fluxos-de-processos)
-4. [Regras de Negócio](#4-📜-regras-de-negócio)
-5. [Integrações Externas](#5-🔗-integrações-externas)
-6. [Infraestrutura Atual](#6-🖥️-infraestrutura-atual)
-7. [Projeção de Crescimento](#7-📈-projeção-de-crescimento)
-8. [Anexos Técnicos](#8-📎-anexos-técnicos)
+1. [Visão Geral](#1--visão-geral)
+2. [Arquitetura](#2-️-arquitetura)
+3. [Fluxos de Processos](#3--fluxos-de-processos)
+4. [Regras de Negócio](#4--regras-de-negócio)
+5. [Integrações Externas](#5--integrações-externas)
+6. [Infraestrutura Atual](#6-️-infraestrutura-atual)
+7. [Projeção de Crescimento](#7--projeção-de-crescimento)
+8. [Anexos Técnicos](#8--anexos-técnicos)
 
 ---
 
@@ -71,6 +71,25 @@ graph TD
         n8n --> PG[(PostgreSQL)]
         Evolution --> PG
     end
+```
+
+#### 2.1.1 Diagrama Detalhado (ASCII)
+```
+INTERNET → CLOUDFLARE (WAF+CDN) → TRAEFIK (Reverse Proxy)
+                                        │
+           ┌────────────────────────────┼────────────────────────────┐
+           ▼                            ▼                            ▼
+    ┌─────────────┐            ┌─────────────────┐           ┌─────────────┐
+    │   PORTAL    │            │   API BACKEND   │           │     n8n     │
+    │  Principal  │            │ Backend + Auth  │           │  Automação  │
+    │ React+Vite  │            │ PocketBase+JSVM │           │  Webhooks   │
+    └─────────────┘            │ Nginx+SQLite    │           │ Redis/PgSQL │
+           │                   └────────┬────────┘           └─────────────┘
+           ▼                            │
+    ┌─────────────┐            ┌────────┴────────┐
+    │ SIST.LEGADO │            ▼                 ▼
+    │ Capacitação │      SQLite (WAL)        Hooks
+    └─────────────┘      (Persistência)    (Imagem)
 ```
 
 ### 2.2 Componentes

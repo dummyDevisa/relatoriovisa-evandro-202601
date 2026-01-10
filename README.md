@@ -11,7 +11,7 @@
 
 Este documento apresenta a arquitetura do **Sistema de Gestão de Processos da Vigilância Sanitária de Belém**, visando subsidiar a **solicitação de infraestrutura dedicada (VPS)** à CINBESA, considerando:
 - Volume atual de operações
-- Projeção de crescimento > **20 mil usuários**
+- Potencial de crescimento: **100 mil usuários** (teto teórico considerando todos os públicos)
 - Plano de escalabilidade para migração de sistemas terceiros
 
 ---
@@ -34,8 +34,14 @@ Este documento apresenta a arquitetura do **Sistema de Gestão de Processos da V
 Automatizar o ciclo completo de licenciamento sanitário, desde a entrada do requerimento até a emissão da licença certificada, sob regime de **segurança em camadas**.
 
 ### 1.2 Público-Alvo
-- **Externos:** Estabelecimentos comerciais, responsáveis técnicos, contadores e cidadãos
-- **Internos:** Gestão e servidores das divisões DVSA, DVSDM, DVSCEP, DVSE, VISAMB e Casa do Açaí
+
+| Segmento | Público | Volume Estimado |
+| :--- | :--- | :--- |
+| **Interno** | Servidores das divisões (DVSA, DVSDM, DVSCEP, DVSE, VISAMB, Casa do Açaí) | ~100 |
+| **Licenciamento** | Empresas, contadores e responsáveis técnicos | 80.000+ CNPJs sujeitos |
+| **Capacitação** | Manipuladores de alimentos | 10.000+/ano |
+| **Fiscalização** | Denunciantes e denunciados (pessoas físicas) | Variável |
+| **Regulação** | Prescritores e instituições (médicos, farmacêuticos) | Variável |
 
 ### 1.3 Estrutura de Rotas
 | Serviço | Função | Rota |
@@ -58,115 +64,43 @@ graph TD
     subgraph Services [Serviços Containerizados]
         Traefik --> Portal[PORTAL<br/>React+Vite]
         Traefik --> API[API BACKEND<br/>PocketBase+JSVM]
-        Traefik --> n8n[n8n<br/>Orquestração]
+        Traefik --> n8n[n8n<br/>Automação]
         Traefik --> Evolution[EVOLUTION API<br/>WhatsApp]
         Traefik --> Legado[SIST. LEGADO<br/>Capacitação]
     end
 
-    subgraph Data [Persistência e Lógica]
+    subgraph Data [Persistência]
         API --> SQLite[(SQLite<br/>WAL)]
+        API --> Redis[(Redis<br/>Cache/Pub-Sub)]
         API --> Hooks([Hooks JSVM])
-        n8n --> Redis[(Redis)]
-        Evolution --> Redis
         n8n --> PG[(PostgreSQL)]
         Evolution --> PG
+        Evolution --> Redis
     end
-```
-
-#### 2.1.1 Diagrama Detalhado (ASCII)
-```
-INTERNET → CLOUDFLARE (WAF+CDN) → TRAEFIK (Reverse Proxy)
-                                        │
-           ┌────────────────────────────┼────────────────────────────┐
-           ▼                            ▼                            ▼
-    ┌─────────────┐            ┌─────────────────┐           ┌─────────────┐
-    │   PORTAL    │            │   API BACKEND   │           │     n8n     │
-    │  Principal  │            │ Backend + Auth  │           │  Automação  │
-    │ React+Vite  │            │ PocketBase+JSVM │           │  Webhooks   │
-    └─────────────┘            │ Nginx+SQLite    │           │ Redis/PgSQL │
-           │                   └────────┬────────┘           └─────────────┘
-           ▼                            │
-    ┌─────────────┐            ┌────────┴────────┐
-    │ SIST.LEGADO │            ▼                 ▼
-    │ Capacitação │      SQLite (WAL)        Hooks
-    └─────────────┘      (Persistência)    (Imagem)
 ```
 
 ### 2.2 Componentes
 | Componente | Tecnologia | Função |
 | :--- | :--- | :--- |
-| **Portal Principal** | *React* 19, *Vite*, *TypeScript* | Interface principal |
-| **Sistema Legado** | *React*, *Vite*, *TailwindCSS* | Sistema de capacitação |
-| **API Backend** | *PocketBase* (Go), SQLite (WAL) | API REST, Auth, Banco e Realtime |
-| **Hooks de Integração** | 25 hooks nativos (imutáveis) | Validação e gatilhos |
-| **Middleware** | Gatekeeper (JSVM) | Proteção ReDoS |
-| **Automação** | *n8n* (container isolado) | E-mails e messageria |
-| **Persistência** | *Redis* + *PostgreSQL* | Filas e auditoria |
+| **Portal Principal** | React 19, Vite, TypeScript | Interface principal |
+| **Sistema Legado** | React, Vite, TailwindCSS | Sistema de capacitação |
+| **API Backend** | PocketBase (Go), SQLite (WAL), Redis | API REST, Auth, Banco, Cache e Realtime |
+| **Hooks de Integração** | 25 hooks JSVM (imutáveis) | Validação, gatilhos e webhooks |
+| **Automação** | n8n (container isolado) | E-mails transacionais |
 
-### 2.3 Lógica de Servidor (Smart Engine)
-O backend estende sua capacidade nativa através de **Hooks JSVM** (Engine V8 isolada):
+### 2.3 Extensibilidade (Hooks JSVM)
+O backend estende sua capacidade nativa através de hooks em Engine V8 isolada: rotas públicas customizadas, triggers de banco (webhooks para n8n), cron jobs de manutenção e realtime via SSE + Redis Pub/Sub.
 
-- **Rotas Customizadas:** Endpoints públicos (`/api/public/*`) para validação de CPFs e emissão de certificados.
-- **Triggers de Banco:** Disparam e-mails transacionais e invalidam registros obsoletos automaticamente.
-- **Cron Jobs:** Manutenção automática (limpeza de logs) e sincronização de caches analíticos.
-- **Realtime:** Monitoramento de conexões ativas (SSE) para gestão de presença de usuários.
+### 2.4 Segurança
+**Defesa em camadas:**
+1. **Borda (Cloudflare):** WAF, DDoS, rate limiting por rota
+2. **Gateway (Traefik/Nginx):** SSL/TLS, headers de segurança, rate limiting
+3. **Aplicação:** API Rules por coleção/método, proteção ReDoS (Gatekeeper)
+4. **Arquivos:** Tokens de curta duração para downloads protegidos
 
-### 2.4 Defesa em Camadas
-1. **Borda (*Cloudflare*):** WAF, proteção DDoS, mascaramento de IP, rate limiting por rota
-2. **Orquestração (*Traefik*):** SSL/TLS, roteamento interno e headers de segurança
-3. **Aplicação (API Rules):** Regras granulares por coleção/método
-4. **Validação (JSVM Hooks):** Sanitização de payloads e proteção ReDoS
-
-### 2.5 Controle de Acesso (API Rules)
-Regras de acesso por coleção (expressões booleanas em runtime):
-
-| Operação | Exemplo |
-| :--- | :--- |
-| **List/Search** | `@request.auth.role = "auth"` |
-| **View** | `@request.auth.id != ""` |
-| **Create** | `@request.auth.role ~ "admin\|manager"` |
-| **Update** | `@request.auth.id = created_by.id` |
-| **Delete** | `@request.auth.role = "admin"` |
-
-Suporte a campos relacionais: `@request.auth.sector = sector.id`
-
-**File Tokens:** Arquivos protegidos exigem token de curta duração (gerado via API) para download.
-
-### 2.6 Rate Limiting
-Proteção em múltiplas camadas contra abusos e ataques:
-
-**Camada 1 - Borda (Cloudflare WAF):**
-| Rota | Limite | Objetivo |
-| :--- | :--- | :--- |
-| Webhooks (`/api/public/webhook/*`) | 10 req/min | Prevenir inundação de payloads externos |
-| API Pública (`/api/public/*`) | 100 req/min | Limitar consultas anônimas |
-
-**Camada 2 - Gateway (Nginx):**
-| Rota | Limite | Objetivo |
-| :--- | :--- | :--- |
-| API Geral (`/api/*`) | 30 req/s (burst 50) | Proteger o backend de picos |
-| Autenticação (`/api/*/auth*`) | 5 req/s (burst 10) | Anti-brute-force em login |
-
-**Camada 3 - Aplicação (PocketBase):**
-- Rate limiting nativo para tentativas de login
-- Bloqueio temporário após falhas consecutivas
-
-### 2.7 Otimização do Banco de Dados
-**Índices:** Campos usados para busca e filtro indexados.
-
-**Views Materializadas:** Agregações pré-calculadas para dashboards:
-| View | Função |
-| :--- | :--- |
-| `analytics_*` | Métricas por período (processos, receita, produtividade) |
-| `cache_zip` | Distribuição geográfica de estabelecimentos |
-| `cache_cnaes` | Contagem por atividade econômica |
-
-**Cron Jobs:** Rotinas agendadas nativas e customizadas:
-| Job | Expressão | Função |
-| :--- | :--- | :--- |
-| `DBOptimize` | `0 0 * * *` | VACUUM/otimização diária |
-| `LogsCleanup` | `0 */6 * * *` | Limpeza de logs a cada 6h |
-| `CacheUpdate` | Customizado | Atualização de views/caches |
+### 2.5 Otimização
+- **Banco:** Índices em campos de busca, views materializadas para dashboards
+- **Manutenção:** Cron jobs nativos (VACUUM diário, limpeza de logs, atualização de caches)
 
 ---
 
@@ -204,14 +138,14 @@ Rotas `/api/public/webhook/*` recebem payloads externos processados por:
 
 ### 3.3 Sistema de Comunicação
 
-#### 3.3.1 Atual: E-mail como Canal Principal
-Sem autenticação pública, e-mail é o canal principal:
+#### 3.3.1 Atual: E-mail via Automação
+Sem autenticação pública, e-mail é o canal principal. Todos os e-mails transacionais são disparados via **webhooks para n8n**:
 
 | Momento | Gatilho | Conteúdo |
 | :--- | :--- | :--- |
-| **Solicitação** | `onRecordAfterCreate` | Confirmação + protocolo |
-| **Triagem** | `onRecordAfterUpdate` | Status (Deferido/Indeferido/Pendente) |
-| **Licença** | `onRecordAfterCreate` | PDF anexo + QR Code |
+| **Solicitação** | Webhook | Confirmação + protocolo |
+| **Triagem** | Webhook | Status (Deferido/Indeferido/Pendente) |
+| **Licença** | Webhook | PDF anexo + QR Code |
 
 #### 3.3.2 Futuro: E-mail como Canal Auxiliar
 Com autenticação pública:
@@ -227,7 +161,10 @@ Automação: n8n (atual) → *WhatsApp Business API* (futuro)
 
 ### 3.4 Emissão de DAM
 
-#### 3.4.1 Gargalo Atual
+#### 3.4.1 Motivo do Uso de DAM Avulso
+A Vigilância Sanitária emite exclusivamente **DAM Avulso** devido à defasagem nos valores tipificados do SIAT. A empresa terceirizada responsável pelo sistema não atualiza os valores das taxas há mais de uma década, enquanto o Decreto Municipal reajusta os valores anualmente pelo **IPCA-E**. Como resultado, os DAMs tipificados apresentam valores incorretos, forçando a VISA a utilizar o DAM Avulso para garantir a cobrança conforme legislação vigente.
+
+#### 3.4.2 Gargalo Operacional
 A emissão de DAM Avulso no SIAT exige:
 - Autenticação em `http://siat.belem.pa.gov.br/`
 - Preenchimento manual de **16 campos** (JSF/PrimeFaces)
@@ -239,7 +176,7 @@ A emissão de DAM Avulso no SIAT exige:
 - **Volume (2025):** 8.000+ solicitações
 - **Impacto:** ~933 horas/ano em tarefa passível de automação
 
-#### 3.4.2 Problema: Duplicidade de DAMs
+#### 3.4.3 Problema: Duplicidade de DAMs
 Empresas podem pagar até 3x o valor devido quando:
 1. Emitem DAM via REGIN
 2. Trocam de contador
@@ -308,18 +245,55 @@ graph TD
 Para consulta/validação/prevenção de duplicidades, pode haver consumo de views. Para emissão (gravação), pode-se integrar via REST, SOAP, stored procedures, troca de arquivos... conforme disponibilidade da CINBESA.
 
 #### 5.1.1 Requisitos (Modelo REST)
+
+**Rotas de Escrita (se disponível):**
 | Método | Endpoint | Função |
 | :--- | :--- | :--- |
 | `POST` | `/api/v1/dam/avulso` | Emissão individual |
 | `POST` | `/api/v1/dam/lote` | Emissão em lote |
-| `GET` | `/api/v1/dam/{numero}` | Consulta DAM |
-| `GET` | `/api/v1/dam/contribuinte/{cnpj}` | Histórico do contribuinte |
+
+**Rotas de Consulta (Views):**
+| Método | Endpoint | Função |
+| :--- | :--- | :--- |
+| `GET` | `/api/v1/dam/{numero}` | Consulta DAM específico |
+| `GET` | `/api/v1/dam/contribuinte/{cnpj}` | DAMs de um contribuinte |
+| `GET` | `/api/v1/dam/visa` | DAMs da Vigilância Sanitária (cod. 307) |
+
+**Parâmetros de Filtro:**
+| Param | Tipo | Descrição |
+| :--- | :--- | :--- |
+| `data_emissao_inicio` | `YYYY-MM-DD` | Filtrar por data de emissão (início) |
+| `data_emissao_fim` | `YYYY-MM-DD` | Filtrar por data de emissão (fim) |
+| `situacao` | `0` ou `1` | 0 = Emitido, 1 = Baixado |
+| `page` | `int` | Página (paginação) |
+| `limit` | `int` | Registros por página |
+
+**Resposta (dados brutos para agregação local):**
+```json
+{
+  "total": 8423,
+  "page": 1,
+  "limit": 100,
+  "items": [
+    {
+      "num_documento_dam": "20260001234567",
+      "num_identificacao": "19769575000100",
+      "valor_total": 984.94,
+      "data_emissao": "2026-01-15",
+      "situacao_pagamento": "1",
+      "data_pagamento": "2026-01-20"
+    }
+  ]
+}
+```
+
+> **Nota:** A agregação (totais, somas) pode ser feita pelo sistema após consumo da view.
 
 #### 5.1.2 Payload de Emissão (Exemplo)
 ```json
 {
   "tipo_pessoa": "PJ",
-  "cnpj": "19769575000100",
+  "cnp": "19769575000100",
   "razao_social": "NOVA MEDICA COMÉRCIO LTDA",
   "unidade": "SESMA",
   "tributo": 509,
@@ -350,8 +324,15 @@ View no sistema fazendário filtrando empresas ativas em Belém com CNAE sujeito
 | `razao_social` | VARCHAR(200) | Nome empresarial |
 | `natureza_juridica` | VARCHAR(4) | Código |
 | `porte_empresa` | VARCHAR(2) | ME, EPP, Demais |
-| `opcao_mei` | BOOLEAN | Se optante MEI |
 | `capital_social` | DECIMAL(15,2) | Capital declarado |
+| `opcao_simples` | CHAR(1) | Se optante Simples ('S'/'N') |
+| `data_opcao_simples` | DATE | Data de opção pelo Simples |
+| `data_exclusao_simples` | DATE | Data de exclusão do Simples |
+| `opcao_mei` | CHAR(1) | Se optante MEI ('S'/'N') |
+| `data_opcao_mei` | DATE | Data de opção pelo MEI |
+| `data_exclusao_mei` | DATE | Data de exclusão do MEI |
+
+> **Identificação de MEI ativo:** `opcao_mei = 'S'` **E** (`data_exclusao_mei` é `NULL` ou futura)
 
 **Tabela: Estabelecimentos**
 | Campo | Tipo | Descrição |
@@ -471,12 +452,22 @@ graph TD
 ## 7. 📈 Projeção de Crescimento
 
 ### 7.1 Base de Usuários
-| Cenário | Usuários | Observação |
+
+**Volume Atual de Operações:**
+| Indicador | Volume | Observação |
 | :--- | :--- | :--- |
-| Atual | ~100 | Servidores DEVISA/CVISA |
-| Curto Prazo | 500-1.000 | RT e contadores |
-| Médio Prazo | 5.000 | Área pública autenticada |
-| Longo Prazo | **20.000** | Todos os estabelecimentos |
+| Empresas licenciadas | ~5.000 | Licenças ativas |
+| Processos de licenciamento | ~6.000/ano | Primeira licença + renovações |
+| Manipuladores de alimentos | 10.000+/ano | Capacitação e certificação |
+| CNPJs sujeitos à VISA | 80.000+ | Potencial de licenciamento |
+
+**Projeção de Usuários Autenticados:**
+| Cenário | Usuários | Composição |
+| :--- | :--- | :--- |
+| Atual | ~100 | Servidores internos |
+| Curto Prazo | 5.000-10.000 | + Contadores, RT, manipuladores |
+| Médio Prazo | 20.000-30.000 | + Empresas licenciadas |
+| Potencial Máximo | 100.000+ | Todos os públicos (teto teórico) |
 
 ### 7.2 Funcionalidades Planejadas
 | Recurso | Impacto |
@@ -500,10 +491,10 @@ O sistema conta com **logging nativo** de requisições e erros (armazenado inte
 | Cenário | RAM | vCPUs | SSD | Justificativa |
 | :--- | :--- | :--- | :--- | :--- |
 | Atual | 8 GB | 3 | 145 GB | Operação estável (~35% uso) |
-| 1 ano | 8-16 GB | 4 | 200 GB | Autenticação pública + WhatsApp |
-| 3 anos | 16 GB | 4-6 | 300 GB | 20k usuários + integrações |
+| 1 ano | 16 GB | 4 | 200 GB | Autenticação pública + WhatsApp + 10k usuários |
+| 3 anos | 16-32 GB | 4-6 | 300 GB | 20-30k usuários + integrações |
 
-> **Nota:** Projeções conservadoras. O PocketBase é extremamente eficiente; a carga atual não justifica mais de 16 GB mesmo com crescimento significativo.
+> **Nota:** Projeções baseadas em crescimento realista. O potencial máximo (100k+ usuários) exigiria migração para arquitetura distribuída (PostgreSQL), avaliada conforme demanda.
 
 ---
 
@@ -512,9 +503,9 @@ O sistema conta com **logging nativo** de requisições e erros (armazenado inte
 ### 8.1 Stack
 **Frontend:** *React* 19, *Vite* 7, *TypeScript* 5.9, *TailwindCSS*, *Lucide*, *ECharts*, *React Hook Form*
 
-**Backend:** *PocketBase* 0.28+ (Go), SQLite 3 (WAL), *Nginx*, *Supervisord*
+**Backend:** *PocketBase* 0.28+ (Go), SQLite 3 (WAL) + Redis cache, *Nginx*, *Supervisord*
 
-**Automação:** *n8n* (auto-hospedado), *Redis*, *PostgreSQL*
+**Automação:** *n8n*, *Redis*, *PostgreSQL*
 
 **DevOps:** *Docker Swarm*, *Easypanel*, *Traefik*, *Cloudflare* (CDN+WAF)
 
